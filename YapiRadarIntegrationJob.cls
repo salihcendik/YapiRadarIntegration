@@ -25,7 +25,7 @@ public without sharing class YapiRadarIntegrationJob extends ECZ_YapiRadarIntegr
     @future(callout=true)
     public static void callAPI(String lastUpdateDate) 
     {
-        Logger.info('YapiRadarIntegrationSchedule is starting...');
+        Logger.info('YapiRadarIntegrationJob is starting...');
 
         try {
             ProjectRequest projectReq = new ProjectRequest();
