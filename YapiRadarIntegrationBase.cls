@@ -3,14 +3,14 @@
  * @last modified on  : 27-10-2023
  * @last modified by  : salih.cendik
 **/
-public virtual class YapiRadarIntegrationBase {
+public virtual class ECZ_YapiRadarIntegrationBase {
 
     public static final String REC_TYPE_ID = Schema.SObjectType.Project__c.getRecordTypeInfosByDeveloperName().get('LeadProject').getRecordTypeId();
 
-    public static List<Project__c> createProjectRecords(List<YapiRadarResponseParser.Value> projectItems){
+    public static List<Project__c> createProjectRecords(List<ECZ_YapiRadarResponseParser.Value> projectItems){
         List<Project__c> projects = new List<Project__c>();
 
-        for (YapiRadarResponseParser.Value item : projectItems) {
+        for (ECZ_YapiRadarResponseParser.Value item : projectItems) {
             Project__c newProject = new Project__c();
             newProject.recordTypeId                = REC_TYPE_ID;
             newProject.Project_Source__c           = 'Yapıradar';
@@ -66,22 +66,27 @@ public virtual class YapiRadarIntegrationBase {
         Map<String, Definition2__c> districtMap = getDefinations(projects);
         if (districtMap.isEmpty()) return;
         for (Project__c project : projects) {
-            Definition2__c def = districtMap.get(project.yr_ProjeIlce__c);
-            project.District__c = def?.Id;
-            project.State__c = def?.State__r.Id;
-            project.Publicgroup__c = getPublicGroup(def);
+            Definition2__c district = districtMap.get(project.City__c + '_' + project.yr_ProjeIlce__c);
+            Definition2__c state = new Definition2__c();
+            if (String.isNotBlank(district?.State__r.Id)){
+                state.Id= district.State__r.Id;
+                state.Publicgroup__c = district.State__r.Publicgroup__c;
+            }else{
+                state = districtMap.get(project.City__c);
+            }
+            project.District__c = district?.Id;
+            project.State__c = state?.Id;
+            project.Publicgroup__c = getPublicGroup(state, district);
         }
         assingOwner(projects);
     }
 
-    public static String getPublicGroup(Definition2__c defination){
+    public static String getPublicGroup(Definition2__c state, Definition2__c district){
         String publicGroup;
-        String publicGroupFromDistrict = defination?.Publicgroup__c;
-        String publicGroupFromState = defination?.State__r?.Publicgroup__c;
-        if (String.isNotBlank(publicGroupFromDistrict)){
-            publicGroup = publicGroupFromDistrict;
-        }else if(String.isNotBlank(publicGroupFromState)){
-            publicGroup = publicGroupFromState;
+        if (String.isNotBlank(district?.Publicgroup__c)){
+            publicGroup = district?.Publicgroup__c;
+        }else if(String.isNotBlank(state?.Publicgroup__c)){
+            publicGroup = state?.Publicgroup__c;
         }else {
             publicGroup = 'Toplu_Is';
         }
@@ -115,23 +120,43 @@ public virtual class YapiRadarIntegrationBase {
 
     public static Map<String, Definition2__c> getDefinations(List<Project__c> projects){
         Set<String> likeDisricts = new Set<String>();
-        for (Project__c project : projects) {
-            likeDisricts.add('%' + project.yr_ProjeIlce__c + '%');
+        Set<String> likeCities = new Set<String>();
+        for (Project__c pro : projects) {
+            likeDisricts.add('%' + pro.City__c + '%' + pro.yr_ProjeIlce__c + '%'); 
+            likeCities.add(pro.City__c);                                          
         }
-        
-        Map<String, Definition2__c> districtMap = new Map<String, Definition2__c>();
-        if (likeDisricts.isEmpty()) return districtMap;
+        System.debug('likeDisricts: '+likeDisricts); //likeDisricts:{%Çanakkale%Gökçeada%, %İstanbul%Kadıköy%}
+        System.debug('likeCities: '+likeCities);  //likeCities:{Çanakkale,İstanbul}
 
-        List<Definition2__c> definations = [SELECT Id, Name, Publicgroup__c, State__r.Id, State__r.Publicgroup__c 
-        FROM Definition2__c WHERE Name LIKE :likeDisricts AND RecordType.DeveloperName = 'District'];
+        Map<String, Definition2__c> districtMap = new Map<String, Definition2__c>();
+        if (likeDisricts.isEmpty() && likeCities.isEmpty()) return districtMap;
+
+        List<Definition2__c> definations = [SELECT Id, Name, Publicgroup__c, State__r.Id, State__r.Publicgroup__c, RecordType.DeveloperName 
+        FROM Definition2__c 
+        WHERE
+        (Name LIKE :likeDisricts AND RecordType.DeveloperName = 'District') OR
+        (Name IN :likeCities AND RecordType.DeveloperName = 'State')];
+
         for (Definition2__c def : definations) {
-            String defName = def.Name;
-            if (defName.contains('-')) {
-                defName = defName.substringAfter('-').trim();
+            //STATE
+            if (def.RecordType.DeveloperName == 'State'){
+                districtMap.put(def.Name, def);  //{Çanakkale=defObj}
+                continue; 
             }
-            districtMap.put(defName, def);
+            //DISTRICT-> Ex: def.Name => Çanakkale - Gökçeada(İmroz), İstanbul - Kadıköy
+            List<String> cityAndDistrict = def.Name.split('-'); 
+            String city = cityAndDistrict[0]?.trim(); //Çanakkale
+            String district = cityAndDistrict[1]?.trim();  //Gökçeada(İmroz)
+            if (district.contains('(')){
+                String district1 = district.substringBefore('(')?.trim();  //Gökçeada
+                String district2 = district.substringBetween('(', ')')?.trim();  //İmroz
+                districtMap.put(city+'_'+district1, def); 
+                districtMap.put(city+'_'+district2, def); 
+            }else{
+                districtMap.put(city+'_'+district, def);  
+            }
         }
-        return districtMap;
+        return districtMap;  //{Çanakkale=defObj,Çanakkale_Gökçeada=defObj,Çanakkale_İmroz=defObj, İstanbul=defObj,İstanbul_Kadıköy=defObj}
     }
 
     public static String cropCity(String dataOfCity){
