@@ -1,3 +1,4 @@
+# Yapı Radar Integration
 Named Credentials
 * Name : YAPIRADAR
 * URL	: https://api.yapiradar.com
